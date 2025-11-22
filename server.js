@@ -27,10 +27,32 @@ const parseJsonBody = (req) => {
     })
     req.on('end', () => {
       try {
-        resolve(body ? JSON.parse(body) : {})
+        if (!body || body.trim() === '') {
+          resolve({})
+          return
+        }
+        
+        // Log the raw body for debugging
+        console.log('📥 Received body:', JSON.stringify(body))
+        console.log('📥 Body length:', body.length)
+        console.log('📥 First 50 chars:', body.substring(0, 50))
+        
+        // Try to parse JSON
+        const parsed = JSON.parse(body)
+        resolve(parsed)
       } catch (error) {
+        console.error('❌ JSON Parse Error:')
+        console.error('   Error:', error.message)
+        console.error('   Body received:', JSON.stringify(body))
+        console.error('   Body preview:', body.substring(0, 100))
+        console.error('   Body type:', typeof body)
         reject(error)
       }
+    })
+    
+    req.on('error', (error) => {
+      console.error('❌ Request error:', error)
+      reject(error)
     })
   })
 }
@@ -76,7 +98,24 @@ httpServer.on('request', async (req, res) => {
           break
         }
 
-        const sendData = await parseJsonBody(req)
+        let sendData
+        try {
+          sendData = await parseJsonBody(req)
+        } catch (parseError) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ 
+            error: 'Invalid JSON format',
+            message: parseError.message,
+            hint: 'Make sure your JSON is valid. Check for: missing quotes, trailing commas, or invalid characters.',
+            example: {
+              userId: '1',
+              message: 'Your message here',
+              type: 'info'
+            }
+          }))
+          break
+        }
+        
         const { userId: notificationUserId, message, type = 'info' } = sendData
 
         if (!notificationUserId || !message) {
@@ -447,7 +486,8 @@ httpServer.on('request', async (req, res) => {
     res.writeHead(500, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({
       error: 'Internal server error',
-      message: error.message
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     }))
   }
 })
