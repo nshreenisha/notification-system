@@ -39,6 +39,18 @@
         }
       },
       "createdAt": "2025-12-29T04:18:57.469Z"
+    },
+    {
+      "userId": "dashboard-company-3-user-1",
+      "subscription": {
+        "endpoint": "https://wns2-pn1p.notify.windows.com/w/?token=BQYAAABO5L42ZB0mXIOYz95wx4lnLqehnAgj9nU7iI5VpvFFvUGshzG9jf5ep3wGbyL6%2b726E6loL3KXPkh%2f2cKkF0jWqa%2b6CbDi0aqDq1JVzUq7GmErIjXsbBIthVmSUgYxeuhiz6YNQmiHSm9S6rm%2bysenJv6yUg5VNQYEAhjp9pblDaeKQcOCZHC0fkT8gvfDjYJEPQajdWqRJmb968tV9sZQxI22rPPwN61AkBGeeSjkUjVmG2vYKEYWLhUeDLZjDWarnQ5C9G0kpkSejDYkE2n3B8dkDHXGaw47QIxIMxA%2fNhMTLCqq8PXnwlJqt6Uwe%2frJE6eHEsF84oI1BXJjZX7n",
+        "expirationTime": null,
+        "keys": {
+          "p256dh": "BKe-1AYNtWcVHjwGA6lcfR9L4lMZFODfCWMRcGYzSpNaWyHFoFtd8_cYkG793-aUUpQstwUHxtluWZtuTC7w0Cw",
+          "auth": "hJqlqgfQGfJA2q6PJHCT6Q"
+        }
+      },
+      "createdAt": "2025-12-29T11:49:35.553Z"
     }
   ],
   "users": [

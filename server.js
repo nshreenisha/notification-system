@@ -697,6 +697,48 @@ httpServer.on('request', async (req, res) => {
         }
         break
 
+      // API: Unsubscribe from push notifications
+      case '/api/push/unsubscribe':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+
+        try {
+          const unsubscribeData = await parseJsonBody(req)
+          const { userId } = unsubscribeData
+
+          if (!userId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ 
+              error: 'Missing required field: userId'
+            }))
+            break
+          }
+
+          // Remove subscription from database
+          const hybridDB = await import('./lib/hybrid-database.js')
+          await hybridDB.removeSubscription(userId)
+
+          console.log(`✅ Push subscription removed for user ${userId}`)
+
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: true,
+            message: 'Push subscription removed successfully',
+            userId
+          }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to remove push subscription',
+            error: error.message
+          }))
+        }
+        break
+
       // API: Test endpoint
       case '/api/test':
         res.writeHead(200, { 'Content-Type': 'application/json' })
