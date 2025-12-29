@@ -1,12 +1,20 @@
 // server.js - Complete version with Content Refresh APIs
-const { createServer } = require('http')
-const path = require('path')
+import { createServer } from 'http'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import dotenv from 'dotenv'
 
-// Load environment variables from .env.local
-require('dotenv').config({ path: path.resolve(__dirname, '.env.local') })
+// Get __dirname equivalent for ES modules
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
-// Import your existing socket library (use relative path, not @/ alias)
-const { initSocket, getConnectionStats } = require('./lib/socket')
+// Load environment variables from .env
+dotenv.config({ path: path.resolve(__dirname, '.env') })
+
+// Import your existing socket library
+import { initSocket, getConnectionStats } from './lib/socket.js'
+// Import web push service
+import * as webPushService from './lib/web-push-service.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -204,6 +212,7 @@ httpServer.on('request', async (req, res) => {
         const refreshData = await parseJsonBody(req)
         const { 
           userId: refreshUserId, 
+          companyId: refreshCompanyId,
           page, 
           component, 
           action = 'refresh',
@@ -231,18 +240,37 @@ httpServer.on('request', async (req, res) => {
           from: 'api'
         }
 
+        let targetDescription = ''
+        let connectedClients = 0
+
         if (broadcast) {
           // Send to all users
           io.emit('content-refresh', refreshMessage)
+          targetDescription = 'all users'
+          connectedClients = io.engine.clientsCount
           console.log(`🔄 Broadcast content refresh - Page: ${page}, Component: ${component}`)
+        } else if (refreshCompanyId) {
+          // Send to specific company
+          const companyRoom = `company-${refreshCompanyId}`
+          const roomSockets = io.sockets.adapter.rooms.get(companyRoom)
+          connectedClients = roomSockets ? roomSockets.size : 0
+          
+          io.to(companyRoom).emit('content-refresh', refreshMessage)
+          targetDescription = `company ${refreshCompanyId}`
+          console.log(`🔄 Company content refresh - Company: ${refreshCompanyId}, Page: ${page}, Component: ${component} (${connectedClients} clients)`)
         } else if (refreshUserId) {
           // Send to specific user
-          io.to(`user-${refreshUserId}`).emit('content-refresh', refreshMessage)
-          console.log(`🔄 Content refresh sent to user ${refreshUserId} - Page: ${page}, Component: ${component}`)
+          const userRoom = `user-${refreshUserId}`
+          const roomSockets = io.sockets.adapter.rooms.get(userRoom)
+          connectedClients = roomSockets ? roomSockets.size : 0
+          
+          io.to(userRoom).emit('content-refresh', refreshMessage)
+          targetDescription = `user ${refreshUserId}`
+          console.log(`🔄 User content refresh - User: ${refreshUserId}, Page: ${page}, Component: ${component}`)
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ 
-            error: 'Must specify either userId or set broadcast: true'
+            error: 'Must specify either userId, companyId, or set broadcast: true'
           }))
           break
         }
@@ -252,8 +280,8 @@ httpServer.on('request', async (req, res) => {
           success: true,
           message: 'Content refresh triggered',
           refreshMessage,
-          targetUser: refreshUserId || 'all',
-          connectedClients: io.engine.clientsCount
+          target: targetDescription,
+          connectedClients
         }))
         break
 
@@ -387,6 +415,288 @@ httpServer.on('request', async (req, res) => {
         }, null, 2))
         break
 
+      // API: Database status
+      case '/api/database/status':
+        try {
+          // Import hybrid database dynamically
+          const hybridDB = await import('./lib/hybrid-database.js')
+          const systemStatus = hybridDB.getSystemStatus()
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: true,
+            status: {
+              mysql: {
+                connected: systemStatus.mysql,
+                message: systemStatus.mysql ? 'MySQL connected' : 'MySQL disconnected'
+              },
+              json: {
+                connected: systemStatus.json,
+                message: 'JSON file storage always available'
+              },
+              syncQueue: systemStatus.syncQueue,
+              lastCheck: systemStatus.lastCheck,
+              mode: systemStatus.mysql ? 'online' : 'offline'
+            }
+          }, null, 2))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to get database status',
+            error: error.message
+          }))
+        }
+        break
+
+      // API: Force sync offline data
+      case '/api/database/sync':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+        
+        try {
+          const hybridDB = await import('./lib/hybrid-database.js')
+          const result = await hybridDB.forcSync()
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(result))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Sync failed',
+            error: error.message
+          }))
+        }
+        break
+
+      // API: Get VAPID public key
+      case '/api/push/vapid-key':
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          success: true,
+          publicKey: webPushService.getVapidPublicKey()
+        }))
+        break
+
+      // API: Subscribe to push notifications
+      case '/api/push/subscribe':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+
+        try {
+          const subscribeData = await parseJsonBody(req)
+          const { userId, subscription } = subscribeData
+
+          if (!userId || !subscription) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ 
+              error: 'Missing required fields: userId, subscription'
+            }))
+            break
+          }
+
+          // Save subscription to database
+          const hybridDB = await import('./lib/hybrid-database.js')
+          await hybridDB.addSubscription(userId, subscription)
+
+          console.log(`✅ Push subscription saved for user ${userId}`)
+
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: true,
+            message: 'Push subscription saved successfully',
+            userId
+          }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to save push subscription',
+            error: error.message
+          }))
+        }
+        break
+
+      // API: Check if push subscription exists
+      case '/api/push/check-subscription':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+
+        try {
+          const checkData = await parseJsonBody(req)
+          const { userId } = checkData
+
+          if (!userId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ 
+              error: 'Missing required field: userId'
+            }))
+            break
+          }
+
+          // Check if subscription exists in database
+          const hybridDB = await import('./lib/hybrid-database.js')
+          const subscription = await hybridDB.getSubscription(userId)
+
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: true,
+            exists: !!subscription,
+            userId
+          }))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to check subscription',
+            error: error.message
+          }))
+        }
+        break
+
+      // API: Send push notification to specific user
+      case '/api/push/send':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+
+        try {
+          const pushData = await parseJsonBody(req)
+          const { userId, title, message, icon, url, data, priority = 'normal' } = pushData
+
+          if (!userId || !message) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ 
+              error: 'Missing required fields: userId, message'
+            }))
+            break
+          }
+
+          // Check user's push notification settings (if available)
+          // For now, we'll assume all notifications are allowed
+          // In production, you'd check the user's settings from database
+          const shouldSendPush = true // This would be determined by user settings
+          
+          if (!shouldSendPush) {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({
+              success: true,
+              message: 'Notification blocked by user settings',
+              userId,
+              blocked: true
+            }))
+            break
+          }
+
+          const result = await webPushService.sendPushNotification(userId, {
+            title,
+            message,
+            icon,
+            url,
+            data: {
+              ...data,
+              priority,
+              timestamp: new Date().toISOString()
+            }
+          })
+
+          res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(result))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to send push notification',
+            error: error.message
+          }))
+        }
+        break
+
+      // API: Broadcast push notification to all users
+      case '/api/push/broadcast':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+
+        try {
+          const broadcastData = await parseJsonBody(req)
+          const { title, message, icon, url, data } = broadcastData
+
+          if (!message) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ 
+              error: 'Missing required field: message'
+            }))
+            break
+          }
+
+          const result = await webPushService.broadcastPushNotification({
+            title,
+            message,
+            icon,
+            url,
+            data
+          })
+
+          res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(result))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to broadcast push notification',
+            error: error.message
+          }))
+        }
+        break
+
+      // API: Test push notification
+      case '/api/push/test':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ message: 'Method not allowed' }))
+          break
+        }
+
+        try {
+          const testData = await parseJsonBody(req)
+          const { userId } = testData
+
+          if (!userId) {
+            res.writeHead(400, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ 
+              error: 'Missing required field: userId'
+            }))
+            break
+          }
+
+          const result = await webPushService.testPushNotification(userId)
+
+          res.writeHead(result.success ? 200 : 500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(result))
+        } catch (error) {
+          res.writeHead(500, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            success: false,
+            message: 'Failed to send test push notification',
+            error: error.message
+          }))
+        }
+        break
+
       // API: Test endpoint
       case '/api/test':
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -471,7 +781,9 @@ httpServer.on('request', async (req, res) => {
           error: 'Not Found',
           availableEndpoints: [
             'GET /health',
-            'GET /api/stats', 
+            'GET /api/stats',
+            'GET /api/database/status',
+            'POST /api/database/sync',
             'POST /api/notifications/send',
             'POST /api/notifications/broadcast',
             'POST /api/content/refresh',

@@ -1,1 +1,51 @@
-{"subscriptions":[{"userId":1,"subscription":"premium","createdAt":"2023-10-10T10:00:00.000Z","updatedAt":"2023-10-10T10:00:00.000Z"}],"users":[{"id":1,"name":"John Doe","email":"john.doe@example.com"}]}
+{
+  "subscriptions": [
+    {
+      "userId": 1,
+      "subscription": "premium",
+      "createdAt": "2023-10-10T10:00:00.000Z",
+      "updatedAt": "2023-10-10T10:00:00.000Z"
+    },
+    {
+      "userId": "test_user_123",
+      "subscription": {
+        "endpoint": "https://test.com/push",
+        "keys": {
+          "p256dh": "test_p256dh_key",
+          "auth": "test_auth_key"
+        }
+      },
+      "createdAt": "2025-12-29T02:42:05.567Z"
+    },
+    {
+      "userId": "user_2",
+      "subscription": {
+        "endpoint": "https://test2.com/push",
+        "keys": {
+          "p256dh": "key2",
+          "auth": "auth2"
+        }
+      },
+      "createdAt": "2025-12-29T02:42:40.683Z"
+    },
+    {
+      "userId": "dashboard-company-1-user-1",
+      "subscription": {
+        "endpoint": "https://wns2-pn1p.notify.windows.com/w/?token=BQYAAABBM3i3LnkcRumG2dffHV4UZtaGHVNLhZFrBYXOfeJVjChoEUg9WbTp%2bsQyjNiXoMW2F4mIyLQl8C%2fV3enrJF7glC24jzImbCBQpPBB1sPpCVujrHRw%2b96K48MWP9C5XrAu0gb4%2bX4zl3FdoRO3Kz1Wk8sZZvlj1wes%2b1aoBrfBgw0jZBN%2fOX2MTebqi%2f6ecEoOoGsumdgirqpvIzsCD%2b%2fLpcKR2APB84C9tzvzUJTfQbdul2dxtk7YIECuIeAZZ7JqEYExgQLXs7ZgtdfDlVpHk%2b1I1FpfWDdT%2bFqlRW1M5v3dnLFJVB%2flphSBxr16G5QVMil%2bilIkq36taKe34koq",
+        "expirationTime": null,
+        "keys": {
+          "p256dh": "BBP6ZMgpO1TZlYMkwvF1BWub43XzRlKm1SynR2PfgZ4UiZPS3U0x4mAhXUFiL0IbHzcLpgOmOOLZJqeI_t84uZc",
+          "auth": "J0r-icKNZvRwEGAvhmEEkg"
+        }
+      },
+      "createdAt": "2025-12-29T04:18:57.469Z"
+    }
+  ],
+  "users": [
+    {
+      "id": 1,
+      "name": "John Doe",
+      "email": "john.doe@example.com"
+    }
+  ]
+}

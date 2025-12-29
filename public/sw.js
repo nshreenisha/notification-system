@@ -1,69 +1,59 @@
-// public/sw.js
-const CACHE_NAME = 'notification-system-v1'
+// Service Worker for Push Notifications
+// Place this file in your frontend's public folder
 
-// Install service worker
 self.addEventListener('install', (event) => {
-  console.log('Service Worker installing...')
+  console.log('🔧 Service Worker installing...')
   self.skipWaiting()
 })
 
-// Activate service worker
 self.addEventListener('activate', (event) => {
-  console.log('Service Worker activating...')
+  console.log('✅ Service Worker activated')
   event.waitUntil(self.clients.claim())
 })
 
 // Handle push notifications
 self.addEventListener('push', (event) => {
-  console.log('Push notification received:', event)
+  console.log('🔔 Push notification received:', event)
   
-  let payload = {}
-  
+  if (!event.data) {
+    console.log('❌ No data in push event')
+    return
+  }
+
   try {
-    payload = event.data ? event.data.json() : {}
-  } catch (error) {
-    payload = {
-      title: 'Notification',
-      body: event.data ? event.data.text() : 'You have a new notification'
+    const data = event.data.json()
+    console.log('📨 Push data:', data)
+
+    const options = {
+      body: data.body,
+      icon: data.icon || '/icon-192x192.png',
+      badge: data.badge || '/badge-72x72.png',
+      data: data.data || {},
+      actions: data.actions || [
+        {
+          action: 'open',
+          title: 'Open App'
+        },
+        {
+          action: 'close',
+          title: 'Close'
+        }
+      ],
+      requireInteraction: true,
+      silent: false
     }
-  }
 
-  const options = {
-    body: payload.body || 'You have a new notification',
-    icon: payload.icon || '/icon-192x192.png',
-    badge: payload.badge || '/badge-72x72.png',
-    vibrate: [100, 50, 100],
-    data: {
-      timestamp: payload.timestamp || Date.now(),
-      url: payload.url || '/'
-    },
-    actions: [
-      {
-        action: 'open',
-        title: 'Open App',
-        icon: '/checkmark.png'
-      },
-      {
-        action: 'close',
-        title: 'Close',
-        icon: '/xmark.png'
-      }
-    ],
-    requireInteraction: true,
-    tag: 'notification-' + (payload.timestamp || Date.now())
-  }
-
-  event.waitUntil(
-    self.registration.showNotification(
-      payload.title || 'Notification',
-      options
+    event.waitUntil(
+      self.registration.showNotification(data.title, options)
     )
-  )
+  } catch (error) {
+    console.error('❌ Error handling push notification:', error)
+  }
 })
 
 // Handle notification clicks
 self.addEventListener('notificationclick', (event) => {
-  console.log('Notification clicked:', event)
+  console.log('👆 Notification clicked:', event)
   
   event.notification.close()
 
@@ -71,20 +61,32 @@ self.addEventListener('notificationclick', (event) => {
     return
   }
 
-  // Open the app
+  // Open the app when notification is clicked
+  const urlToOpen = event.notification.data?.url || '/'
+  
   event.waitUntil(
-    self.clients.matchAll().then((clients) => {
-      // Check if app is already open
-      for (const client of clients) {
-        if (client.url === self.location.origin && 'focus' in client) {
-          return client.focus()
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        // Check if app is already open
+        for (const client of clientList) {
+          if (client.url.includes(self.location.origin) && 'focus' in client) {
+            client.focus()
+            if (urlToOpen !== '/') {
+              client.navigate(urlToOpen)
+            }
+            return
+          }
         }
-      }
-      
-      // Open new window if app is not open
-      if (self.clients.openWindow) {
-        return self.clients.openWindow('/')
-      }
-    })
+        
+        // Open new window if app is not open
+        if (self.clients.openWindow) {
+          return self.clients.openWindow(urlToOpen)
+        }
+      })
   )
+})
+
+// Handle notification close
+self.addEventListener('notificationclose', (event) => {
+  console.log('❌ Notification closed:', event.notification.data)
 })
