@@ -39,12 +39,12 @@ const parseJsonBody = (req) => {
           resolve({})
           return
         }
-        
+
         // Log the raw body for debugging
         console.log('📥 Received body:', JSON.stringify(body))
         console.log('📥 Body length:', body.length)
         console.log('📥 First 50 chars:', body.substring(0, 50))
-        
+
         // Try to parse JSON
         const parsed = JSON.parse(body)
         resolve(parsed)
@@ -57,7 +57,7 @@ const parseJsonBody = (req) => {
         reject(error)
       }
     })
-    
+
     req.on('error', (error) => {
       console.error('❌ Request error:', error)
       reject(error)
@@ -69,27 +69,27 @@ const parseJsonBody = (req) => {
 httpServer.on('request', async (req, res) => {
   // Parse URL
   const url = new URL(req.url, `http://${req.headers.host}`)
-  
+
   // Set CORS headers for all responses
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  
+
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
     res.writeHead(200)
     res.end()
     return
   }
-  
+
   // Route handling
   try {
     switch (url.pathname) {
       case '/health':
         const stats = getConnectionStats()
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ 
-          status: 'ok', 
+        res.end(JSON.stringify({
+          status: 'ok',
           port: PORT,
           environment: process.env.NODE_ENV || 'development',
           timestamp: new Date().toISOString(),
@@ -111,7 +111,7 @@ httpServer.on('request', async (req, res) => {
           sendData = await parseJsonBody(req)
         } catch (parseError) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Invalid JSON format',
             message: parseError.message,
             hint: 'Make sure your JSON is valid. Check for: missing quotes, trailing commas, or invalid characters.',
@@ -123,12 +123,12 @@ httpServer.on('request', async (req, res) => {
           }))
           break
         }
-        
+
         const { userId: notificationUserId, message, type = 'info' } = sendData
 
         if (!notificationUserId || !message) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Missing required fields: userId, message',
             received: sendData
           }))
@@ -145,9 +145,9 @@ httpServer.on('request', async (req, res) => {
 
         // Send via Socket.IO
         io.to(`user-${notificationUserId}`).emit('notification', notification)
-        
+
         console.log(`📨 API notification sent to user ${notificationUserId}:`, message)
-        
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
@@ -171,7 +171,7 @@ httpServer.on('request', async (req, res) => {
 
         if (!broadcastMessage) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Missing required field: message',
             received: broadcastData
           }))
@@ -189,9 +189,9 @@ httpServer.on('request', async (req, res) => {
 
         // Broadcast via Socket.IO
         io.emit('notification', broadcastNotification)
-        
+
         console.log(`📢 API broadcast:`, broadcastMessage, `(${io.engine.clientsCount} clients)`)
-        
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
@@ -210,19 +210,19 @@ httpServer.on('request', async (req, res) => {
         }
 
         const refreshData = await parseJsonBody(req)
-        const { 
-          userId: refreshUserId, 
+        const {
+          userId: refreshUserId,
           companyId: refreshCompanyId,
-          page, 
-          component, 
+          page,
+          component,
           action = 'refresh',
           data = null,
-          broadcast = false 
+          broadcast = false
         } = refreshData
 
         if (!page && !component) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Missing required field: page or component',
             received: refreshData
           }))
@@ -254,7 +254,7 @@ httpServer.on('request', async (req, res) => {
           const companyRoom = `company-${refreshCompanyId}`
           const roomSockets = io.sockets.adapter.rooms.get(companyRoom)
           connectedClients = roomSockets ? roomSockets.size : 0
-          
+
           io.to(companyRoom).emit('content-refresh', refreshMessage)
           targetDescription = `company ${refreshCompanyId}`
           console.log(`🔄 Company content refresh - Company: ${refreshCompanyId}, Page: ${page}, Component: ${component} (${connectedClients} clients)`)
@@ -263,18 +263,18 @@ httpServer.on('request', async (req, res) => {
           const userRoom = `user-${refreshUserId}`
           const roomSockets = io.sockets.adapter.rooms.get(userRoom)
           connectedClients = roomSockets ? roomSockets.size : 0
-          
+
           io.to(userRoom).emit('content-refresh', refreshMessage)
           targetDescription = `user ${refreshUserId}`
           console.log(`🔄 User content refresh - User: ${refreshUserId}, Page: ${page}, Component: ${component}`)
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Must specify either userId, companyId, or set broadcast: true'
           }))
           break
         }
-        
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
@@ -294,16 +294,16 @@ httpServer.on('request', async (req, res) => {
         }
 
         const invalidateData = await parseJsonBody(req)
-        const { 
-          cacheKeys = [], 
-          dataType, 
-          userId: invalidateUserId, 
-          broadcast: invalidateBroadcast = false 
+        const {
+          cacheKeys = [],
+          dataType,
+          userId: invalidateUserId,
+          broadcast: invalidateBroadcast = false
         } = invalidateData
 
         if (!cacheKeys.length && !dataType) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Missing required field: cacheKeys or dataType'
           }))
           break
@@ -315,7 +315,8 @@ httpServer.on('request', async (req, res) => {
           dataType,
           timestamp: new Date().toISOString(),
           id: Date.now(),
-          from: 'api'
+          from: 'api',
+          ...invalidateData // Include all other data passed (like featureKey, isEnabled)
         }
 
         if (invalidateBroadcast) {
@@ -326,12 +327,12 @@ httpServer.on('request', async (req, res) => {
           console.log(`🗑️ Data invalidation sent to user ${invalidateUserId}`)
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Must specify either userId or set broadcast: true'
           }))
           break
         }
-        
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
@@ -350,17 +351,17 @@ httpServer.on('request', async (req, res) => {
         }
 
         const updateData = await parseJsonBody(req)
-        const { 
+        const {
           contentId,
           contentType,
           newContent,
           userId: updateUserId,
-          broadcast: updateBroadcast = false 
+          broadcast: updateBroadcast = false
         } = updateData
 
         if (!contentId || !newContent) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Missing required fields: contentId, newContent'
           }))
           break
@@ -384,12 +385,12 @@ httpServer.on('request', async (req, res) => {
           console.log(`📝 Content update sent to user ${updateUserId} - ID: ${contentId}`)
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ 
+          res.end(JSON.stringify({
             error: 'Must specify either userId or set broadcast: true'
           }))
           break
         }
-        
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
@@ -421,7 +422,7 @@ httpServer.on('request', async (req, res) => {
           // Import hybrid database dynamically
           const hybridDB = await import('./lib/hybrid-database.js')
           const systemStatus = hybridDB.getSystemStatus()
-          
+
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
             success: true,
@@ -456,7 +457,7 @@ httpServer.on('request', async (req, res) => {
           res.end(JSON.stringify({ message: 'Method not allowed' }))
           break
         }
-        
+
         try {
           const hybridDB = await import('./lib/hybrid-database.js')
           const result = await hybridDB.forcSync()
@@ -495,7 +496,7 @@ httpServer.on('request', async (req, res) => {
 
           if (!userId || !subscription) {
             res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ 
+            res.end(JSON.stringify({
               error: 'Missing required fields: userId, subscription'
             }))
             break
@@ -537,7 +538,7 @@ httpServer.on('request', async (req, res) => {
 
           if (!userId) {
             res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ 
+            res.end(JSON.stringify({
               error: 'Missing required field: userId'
             }))
             break
@@ -577,7 +578,7 @@ httpServer.on('request', async (req, res) => {
 
           if (!userId || !message) {
             res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ 
+            res.end(JSON.stringify({
               error: 'Missing required fields: userId, message'
             }))
             break
@@ -587,7 +588,7 @@ httpServer.on('request', async (req, res) => {
           // For now, we'll assume all notifications are allowed
           // In production, you'd check the user's settings from database
           const shouldSendPush = true // This would be determined by user settings
-          
+
           if (!shouldSendPush) {
             res.writeHead(200, { 'Content-Type': 'application/json' })
             res.end(JSON.stringify({
@@ -637,7 +638,7 @@ httpServer.on('request', async (req, res) => {
 
           if (!message) {
             res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ 
+            res.end(JSON.stringify({
               error: 'Missing required field: message'
             }))
             break
@@ -677,7 +678,7 @@ httpServer.on('request', async (req, res) => {
 
           if (!userId) {
             res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ 
+            res.end(JSON.stringify({
               error: 'Missing required field: userId'
             }))
             break
@@ -711,7 +712,7 @@ httpServer.on('request', async (req, res) => {
 
           if (!userId) {
             res.writeHead(400, { 'Content-Type': 'application/json' })
-            res.end(JSON.stringify({ 
+            res.end(JSON.stringify({
               error: 'Missing required field: userId'
             }))
             break
@@ -749,7 +750,7 @@ httpServer.on('request', async (req, res) => {
           connectedClients: io.engine.clientsCount
         }))
         break
-        
+
       case '/':
         res.writeHead(200, { 'Content-Type': 'text/html' })
         res.end(`
@@ -816,7 +817,7 @@ httpServer.on('request', async (req, res) => {
           </html>
         `)
         break
-        
+
       default:
         res.writeHead(404, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
@@ -855,7 +856,7 @@ httpServer.listen(PORT, '0.0.0.0', (err) => {
     console.error('❌ Failed to start server:', err)
     process.exit(1)
   }
-  
+
   console.log(`✅ Socket.IO server running on http://localhost:${PORT}`)
   console.log(`🏥 Health check: http://localhost:${PORT}/health`)
   console.log(`🌐 Frontend can connect to: http://localhost:${PORT}`)
@@ -869,7 +870,7 @@ httpServer.listen(PORT, '0.0.0.0', (err) => {
 // Enhanced error handling
 httpServer.on('error', (error) => {
   console.error('\n❌ Server Error:', error.message)
-  
+
   if (error.code === 'EADDRINUSE') {
     console.error(`📍 Port ${PORT} is already in use`)
     console.log('\n💡 Solutions:')
@@ -880,26 +881,26 @@ httpServer.on('error', (error) => {
     console.error(`📍 Permission denied for port ${PORT}`)
     console.log('\n💡 Try using a port above 1024 or run with sudo')
   }
-  
+
   process.exit(1)
 })
 
 // Graceful shutdown handling
 const gracefulShutdown = (signal) => {
   console.log(`\n🛑 ${signal} received, shutting down gracefully...`)
-  
+
   httpServer.close((err) => {
     if (err) {
       console.error('❌ Error during shutdown:', err)
       process.exit(1)
     }
-    
+
     console.log('✅ HTTP server closed')
     console.log('🔌 Socket.IO connections closed')
     console.log('👋 Socket server stopped gracefully')
     process.exit(0)
   })
-  
+
   // Force close after 10 seconds if graceful shutdown fails
   setTimeout(() => {
     console.error('❌ Forced shutdown after 10 seconds timeout')
