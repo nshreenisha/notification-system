@@ -167,30 +167,35 @@ httpServer.on('request', async (req, res) => {
         }
 
         const broadcastData = await parseJsonBody(req)
-        const { message: broadcastMessage, type: broadcastType = 'info' } = broadcastData
+        const { message: broadcastMessage, type: broadcastType = 'info', event, data: broadcastDataPayload } = broadcastData
 
-        if (!broadcastMessage) {
+        if (!broadcastMessage && !event) {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
-            error: 'Missing required field: message',
+            error: 'Missing required field: message or event',
             received: broadcastData
           }))
           break
         }
 
         const broadcastNotification = {
-          message: broadcastMessage,
+          message: broadcastMessage || 'New Event',
           type: broadcastType,
           timestamp: new Date().toISOString(),
           id: Date.now(),
           broadcast: true,
-          from: 'api'
+          from: 'api',
+          data: broadcastDataPayload // Pass data through
         }
 
         // Broadcast via Socket.IO
-        io.emit('notification', broadcastNotification)
-
-        console.log(`📢 API broadcast:`, broadcastMessage, `(${io.engine.clientsCount} clients)`)
+        if (event) {
+          io.emit(event, broadcastDataPayload || broadcastNotification)
+          console.log(`📢 API Custom Event Broadcast: ${event}`, `(${io.engine.clientsCount} clients)`)
+        } else {
+          io.emit('notification', broadcastNotification)
+          console.log(`📢 API broadcast:`, broadcastMessage, `(${io.engine.clientsCount} clients)`)
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
