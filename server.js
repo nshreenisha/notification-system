@@ -158,6 +158,57 @@ httpServer.on('request', async (req, res) => {
         }))
         break
 
+      // API: Send notification to specific ROLE in a company
+      case '/api/notifications/role':
+        if (req.method !== 'POST') {
+          res.writeHead(405, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Method not allowed' }))
+          break
+        }
+
+        let roleData
+        try {
+          roleData = await parseJsonBody(req)
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Invalid JSON' }))
+          break
+        }
+
+        const { companyId: roleCompanyId, role: targetRole, message: roleMessage, type: roleType = 'info' } = roleData
+
+        if (!roleCompanyId || !targetRole || !roleMessage) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            error: 'Missing required fields: companyId, role, message'
+          }))
+          break
+        }
+
+        const roleRoom = `company-${roleCompanyId}-${targetRole}`
+        const roleNotification = {
+          message: roleMessage,
+          type: roleType,
+          timestamp: new Date().toISOString(),
+          id: Date.now(),
+          from: 'api',
+          role: targetRole
+        }
+
+        // Send to Role Room
+        io.to(roleRoom).emit('notification', roleNotification)
+        console.log(`📢 Role notification sent to ${roleRoom}:`, roleMessage)
+
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          success: true,
+          message: 'Role notification sent',
+          targetRoom: roleRoom,
+          notification: roleNotification,
+          connectedClients: io.engine.clientsCount
+        }))
+        break
+
       // API: Broadcast notification to all users  
       case '/api/notifications/broadcast':
         if (req.method !== 'POST') {

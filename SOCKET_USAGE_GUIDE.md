@@ -1,451 +1,453 @@
-# Socket Server Usage Guide
+# Socket Server Integration Guide
 
-## Quick Start
-
-### Start the Server
-```bash
-cd socket
-npm start
-# or for development with auto-reload
-npm run dev
-```
-
-Server will start on: `http://localhost:3001`
+This guide provides **copy-paste solutions** for integrating real-time features into your application using the Socket Server.
+It covers the full flow: **Laravel Backend (Trigger) -> Socket Server (Hub) -> React Frontend (Receiver)**.
 
 ---
 
-## For Frontend Developers
-
-### 1. Import the Hook
-```javascript
-import { useSocketNotifications } from '@/hooks/useSocket'
-```
-
-### 2. Use in Your Component
-```javascript
-const MyComponent = () => {
-  const userId = user?.id // Get current user ID
-  
-  const {
-    socket,              // Socket instance
-    isConnected,         // Connection status
-    notifications,       // Array of notifications
-    unreadCount,         // Number of unread notifications
-    isLoading,           // Loading state
-    markAsRead,          // Function to mark notification as read
-    markAllAsRead,       // Function to mark all as read
-    deleteNotification,  // Function to delete notification
-    clearNotifications,  // Function to clear all notifications
-    fetchNotifications,  // Function to refresh notifications
-    sendNotification,    // Function to send to specific user
-    broadcastNotification // Function to broadcast to all
-  } = useSocketNotifications(userId)
-  
-  return (
-    <div>
-      {/* Connection indicator */}
-      <div className={isConnected ? 'bg-green-500' : 'bg-red-500'}>
-        {isConnected ? 'Connected' : 'Disconnected'}
-      </div>
-      
-      {/* Unread count badge */}
-      {unreadCount > 0 && (
-        <span className="badge">{unreadCount}</span>
-      )}
-      
-      {/* Notifications list */}
-      {notifications.map(notification => (
-        <div key={notification.id}>
-          <p>{notification.message}</p>
-          <button onClick={() => markAsRead(notification.id)}>
-            Mark as Read
-          </button>
-          <button onClick={() => deleteNotification(notification.id)}>
-            Delete
-          </button>
-        </div>
-      ))}
-    </div>
-  )
-}
-```
-
-### 3. Send Notification to User
-```javascript
-// Send to specific user
-await sendNotification('user-123', 'Hello User!', 'info')
-
-// Broadcast to all users
-await broadcastNotification('System maintenance in 5 minutes', 'warning')
-```
+## 📚 Table of Contents
+1. [Real-time Notifications](#1-real-time-notifications) (Targeted alerts to specific users)
+2. [Content Refresh](#2-content-refresh) (Tell frontend to refetch data)
+3. [Live Content Updates](#3-live-content-updates) (Push new data directly)
+4. [Broadcasts](#4-broadcasts) (System-wide announcements)
+5. [Connection Setup](#5-connection-setup)
+6. [Audio / Video Calling](#6-audio--video-calling-webrtc-signaling) (WebRTC Signaling)
+7. [Browser Push Notifications](#7-browser-push-notifications-web-push) (Mobile/Desktop Alerts)
+8. [Role-Based Notifications](#8-role-based-notifications) (Targeted Employee Alerts)
 
 ---
 
-## For Backend Developers (Laravel)
+## 1. Real-time Notifications
+**Use Case:** Sending a "Success", "Error", or "Info" alert to a specific logged-in user.
+**Example:** "Your order #1234 is Ready!"
 
-### Send Notification via HTTP API
+### Step 1: Backend (Laravel) - Trigger the Notification
+Call this in your Controller or Service after an action occurs.
 
-#### Option 1: Using cURL
-```bash
-curl -X POST http://localhost:3001/api/notifications/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "userId": "123",
-    "message": "Your order has been shipped!",
-    "type": "success"
-  }'
-```
-
-#### Option 2: Using PHP/Laravel
 ```php
 use Illuminate\Support\Facades\Http;
 
-// Send to specific user
-Http::post('http://localhost:3001/api/notifications/send', [
-    'userId' => $user->id,
-    'message' => 'Your order has been shipped!',
-    'type' => 'success'
-]);
+class OrderController extends Controller {
+    public function markReady($orderId) {
+        $order = Order::find($orderId);
+        $order->status = 'ready';
+        $order->save();
 
-// Broadcast to all users
-Http::post('http://localhost:3001/api/notifications/broadcast', [
-    'message' => 'System maintenance scheduled',
+        // 🚀 Trigger Socket Notification
+        try {
+            Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/notifications/send', [
+                'userId' => (string) $order->user_id, // Ensure ID is string
+                'message' => "Order #{$order->order_number} is now READY!",
+                'type' => 'success' // Options: 'success', 'error', 'warning', 'info'
+            ]);
+        } catch (\Exception $e) {
+            // Log error but don't fail the request
+            \Log::error("Failed to send socket notification: " . $e->getMessage());
+        }
+        
+        return response()->json(['success' => true]);
+    }
+}
+```
+
+### Step 2: Frontend (React) - Receive & Display
+The `socketRegistration.js` service and `useSocket` hook already handle this, but here is how to use it in a component if you need custom handling.
+
+```javascript
+/* src/components/OrderNotification.js */
+import { useEffect } from 'react';
+import { useSocket } from '@/context/SocketContext'; // Assuming you have a context or hook in place
+// OR access directly if global (as seen in socketRegistration.js)
+
+export default function OrderNotification() {
+  useEffect(() => {
+    // Check if socket is available
+    const socket = window.socketConnection; 
+    
+    if (!socket) return;
+
+    const handleNotification = (data) => {
+      console.log("🔔 Notification Received:", data);
+      
+      // Example: Show toast
+      if (data.type === 'success') {
+        alert(`✅ ${data.message}`);
+      }
+    };
+
+    // 🎧 Listen for event
+    socket.on('notification', handleNotification);
+
+    // 🧹 Cleanup
+    return () => {
+      socket.off('notification', handleNotification);
+    };
+  }, []);
+
+  return null; // This component handles logic only
+}
+```
+
+---
+
+## 2. Content Refresh
+**Use Case:** Telling the frontend "Something changed, please re-fetch the data" instead of pushing the whole data object.
+**Example:** A new Kitchen Order is placed; the Kitchen Display System (KDS) should refresh the list.
+
+### Step 1: Backend (Laravel) - Trigger Refresh
+```php
+public function storeOrder(Request $request) {
+    // ... logic to create order ...
+    
+    $companyId = $request->user()->company_id;
+
+    // 🚀 Refresh Kitchen Display for ALL users in this company
+    try {
+        Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/content/refresh', [
+            'companyId' => $companyId,   // Target: All users in this company
+            'page' => 'kitchen',         // Context: Kitchen Page
+            'component' => 'order-list', // Specific Component
+            'action' => 'refresh'        // Action type
+        ]);
+    } catch (\Exception $e) {
+        // ...
+    }
+}
+```
+
+### Step 2: Frontend (React) - Auto-Refresh Data
+```javascript
+/* src/app/(restopos)/restopos/kitchen/page.js */
+import { useEffect, useState } from 'react';
+
+export default function KitchenPage() {
+  const [orders, setOrders] = useState([]);
+
+  // Function to fetch data from API
+  const fetchOrders = async () => {
+    const res = await fetch('/api/kitchen/orders');
+    const data = await res.json();
+    setOrders(data);
+  };
+
+  useEffect(() => {
+    fetchOrders(); // Initial load
+
+    // 🎧 Socket Listener for Refresh
+    const socket = window.socketConnection;
+    if (socket) {
+      const handleRefresh = (data) => {
+        // Check if the refresh event applies to this component
+        if (data.page === 'kitchen' && data.component === 'order-list') {
+          console.log("🔄 New order detected! Refreshing list...");
+          fetchOrders(); // <--- Re-run data fetching
+        }
+      };
+
+      socket.on('content-refresh', handleRefresh);
+      return () => socket.off('content-refresh', handleRefresh);
+    }
+  }, []);
+
+  return (
+    <div>
+      {orders.map(order => <OrderCard key={order.id} data={order} />)}
+    </div>
+  );
+}
+```
+
+---
+
+## 3. Live Content Updates
+**Use Case:** Pushing `newContent` directly to the client to update the UI *instantly* without an API call.
+**Example:** Updating the "Status" of a table from "Available" to "Occupied".
+
+### Step 1: Backend (Laravel) - Push Update
+```php
+public function updateTableStatus($tableId) {
+    // ... logic ...
+
+    // 🚀 Push Live Update
+    Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/content/update', [
+        'broadcast' => true,            // Send to everyone (or use 'companyId')
+        'contentId' => "table-{$tableId}", // Unique ID for finding the item on frontend
+        'contentType' => 'table-status',
+        'newContent' => [
+            'status' => 'occupied',
+            'last_active' => now()->toIsoString()
+        ]
+    ]);
+}
+```
+
+### Step 2: Frontend (React) - Apply Update
+```javascript
+/* src/components/FloorPlan.js */
+import { useEffect, useState } from 'react';
+
+export default function FloorPlan({ initialTables }) {
+  const [tables, setTables] = useState(initialTables);
+
+  useEffect(() => {
+    const socket = window.socketConnection;
+    if (!socket) return;
+
+    const handleUpdate = (data) => {
+      // 🎯 Find and update the specific item locally
+      if (data.contentType === 'table-status') {
+        const tableId = data.contentId.replace('table-', '');
+        
+        setTables(prevTables => prevTables.map(table => {
+           if (String(table.id) === String(tableId)) {
+             return { ...table, ...data.newContent }; // Merge new data
+           }
+           return table;
+        }));
+      }
+    };
+
+    socket.on('content-update', handleUpdate);
+    return () => socket.off('content-update', handleUpdate);
+  }, []);
+
+  return (
+    <div className="floor-plan">
+      {tables.map(table => (
+        <div key={table.id} className={`table ${table.status}`}>
+          {table.name}
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+---
+
+## 4. Broadcasts
+**Use Case:** System-wide alerts for everyone.
+**Example:** "Server Maintenance in 10 minutes."
+
+### Step 1: Backend
+```php
+Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/notifications/broadcast', [
+    'message' => '⚠️ Maintenance scheduled for 2:00 AM',
     'type' => 'warning'
 ]);
 ```
 
-#### Option 3: Using Guzzle
-```php
-use GuzzleHttp\Client;
-
-$client = new Client();
-$response = $client->post('http://localhost:3001/api/notifications/send', [
-    'json' => [
-        'userId' => $user->id,
-        'message' => 'New message from admin',
-        'type' => 'info'
-    ]
-]);
-```
-
-### Notification Types
-- `info` - Blue color, info icon
-- `success` - Green color, checkmark icon
-- `warning` - Yellow/orange color, warning icon
-- `error` - Red color, error icon
+### Step 2: Frontend
+Handled automatically by the notification listener (see Section 1).
 
 ---
 
-## Advanced Features
+## 5. Connection Setup
+This is handled by `src/services/socketRegistration.js`.
 
-### 1. Content Refresh (Live Updates)
-Trigger specific page/component to refresh data:
+**To ensure a component has access to the socket:**
+1. Stick to using `window.socketConnection` (as established by the service).
+2. Or use a proper React Context (recommended for cleaner code).
 
+**Checking Connection:**
 ```javascript
-// Via HTTP API
-fetch('http://localhost:3001/api/content/refresh', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    page: 'dashboard',
-    component: 'userList',
-    action: 'refresh',
-    broadcast: true // or specify userId
-  })
-})
-```
-
-Frontend listens for this event:
-```javascript
-socket.on('content-refresh', (data) => {
-  if (data.page === 'dashboard' && data.component === 'userList') {
-    // Refresh the user list data
-    fetchUserList()
-  }
-})
-```
-
-### 2. Cache Invalidation
-Tell frontend to invalidate cached data:
-
-```javascript
-fetch('http://localhost:3001/api/data/invalidate', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    cacheKeys: ['users', 'products'],
-    broadcast: true
-  })
-})
-```
-
-### 3. Live Content Updates
-Push new content directly to clients:
-
-```javascript
-fetch('http://localhost:3001/api/content/update', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    contentId: 'announcement-1',
-    contentType: 'announcement',
-    newContent: {
-      title: 'New Announcement',
-      body: 'Check out our new features!'
-    },
-    broadcast: true
-  })
-})
+if (window.socketConnection && window.socketConnection.connected) {
+   console.log("✅ Socket is online");
+} else {
+   console.log("❌ Socket is offline");
+}
 ```
 
 ---
 
-## Testing
+## 6. Audio / Video Calling (WebRTC Signaling)
+**Use Case:** Enabling video or audio calls between users.
+**How it works:** The Socket Server acts as a "Signaling Server" to relay WebRTC connection data (`offer`, `answer`, `ice-candidate`) between two clients. **No new server code is needed;** it is already built-in.
 
-### 1. Health Check
-```bash
-curl http://localhost:3001/health
-```
+### Client-Side Implementation (React)
+Use this pattern to implement calling. The events `call-user`, `answer-call`, `ice-candidate`, and `end-call` are pre-configured on the server.
 
-### 2. View Statistics
-```bash
-curl http://localhost:3001/api/stats
-```
-
-### 3. Test from Browser Console
 ```javascript
-// Test sending notification
-fetch('http://localhost:3001/api/notifications/send', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    userId: "5",
-    message: "Test from browser!",
-    type: "info"
-  })
-})
-.then(r => r.json())
-.then(console.log)
+/* src/hooks/useWebRTC.js (Simplified Example) */
+import { useEffect, useRef, useState } from 'react';
+import Peer from 'simple-peer'; // Recommended library: npm install simple-peer
+
+export function useVideoCall(currentUserId) {
+  const [caller, setCaller] = useState('');
+  const [receivingCall, setReceivingCall] = useState(false);
+  const [callAccepted, setCallAccepted] = useState(false);
+  const [signal, setSignal] = useState(null);
+  
+  const connectionRef = useRef();
+  const socket = window.socketConnection;
+
+  useEffect(() => {
+    if (!socket) return;
+
+    // 📞 Listen for incoming calls
+    socket.on('call-user', (data) => {
+      setReceivingCall(true);
+      setCaller(data.from);
+      setSignal(data.signal);
+      console.log(`Incoming call from ${data.from}`);
+    });
+
+    socket.on('call-accepted', (signal) => {
+      setCallAccepted(true);
+      connectionRef.current.signal(signal);
+    });
+
+    // ❄️ Handle ICE candidates (Connecting paths)
+    socket.on('ice-candidate', (candidate) => {
+      if (connectionRef.current) {
+        connectionRef.current.addIceCandidate(candidate);
+      }
+    });
+
+    socket.on('call-ended', () => {
+       endCall();
+    });
+
+    return () => {
+      socket.off('call-user');
+      socket.off('call-accepted');
+      socket.off('ice-candidate');
+    };
+  }, [socket]);
+
+  // 1️⃣ Initiate Call
+  const callUser = (idToCall, stream) => {
+    const peer = new Peer({ initiator: true, trickle: false, stream });
+
+    peer.on('signal', (data) => {
+      socket.emit('call-user', {
+        userToCall: idToCall,
+        signalData: data,
+        from: currentUserId
+      });
+    });
+
+    peer.on('stream', (userStream) => {
+        // userVideo.current.srcObject = userStream;
+    });
+
+    connectionRef.current = peer;
+  };
+
+  // 2️⃣ Answer Call
+  const answerCall = (stream) => {
+    setCallAccepted(true);
+    const peer = new Peer({ initiator: false, trickle: false, stream });
+
+    peer.on('signal', (data) => {
+      socket.emit('answer-call', { signal: data, to: caller });
+    });
+
+    peer.on('stream', (userStream) => {
+        // userVideo.current.srcObject = userStream;
+    });
+
+    peer.signal(signal);
+    connectionRef.current = peer;
+  };
+  
+  // 3️⃣ End Call
+  const endCall = () => {
+      setCallAccepted(false);
+      setReceivingCall(false);
+      if(connectionRef.current) connectionRef.current.destroy();
+      
+      if(caller) {
+          socket.emit('end-call', { to: caller });
+      }
+  };
+
+  return { callUser, answerCall, receivingCall, callAccepted };
+}
 ```
 
 ---
 
-## Common Use Cases
+## 7. Browser Push Notifications (Web Push)
+**Use Case:** Notifications even when the tab is closed (Mobile/Desktop OS-level alerts).
+**Prerequisites:** You must have `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` in your `.env`.
 
-### 1. Order Status Updates
+### Step 1: Register Service Worker & Subscribe
+(This is already handled in `src/services/socketRegistration.js`, but here is the manual logic)
+
+```javascript
+// public/push-helper.js or similar
+async function subscribeToPush() {
+    // 1. Get Public Key from Server
+    const response = await fetch('http://localhost:3001/api/push/vapid-key');
+    const { publicKey } = await response.json();
+
+    // 2. Register Service Worker
+    const register = await navigator.serviceWorker.register('/sw.js');
+
+    // 3. Subscribe
+    const subscription = await register.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: publicKey
+    });
+
+    // 4. Send Subscription to Server
+    await fetch('http://localhost:3001/api/push/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ userId: currentUser.id, subscription }),
+        headers: { 'Content-Type': 'application/json' }
+    });
+}
+```
+
+### Step 2: Sending a Web Push (from Backend)
+The Socket Server will handle talking to Google/Mozilla push services.
+
 ```php
-// In Laravel controller after order update
-Http::post('http://localhost:3001/api/notifications/send', [
-    'userId' => $order->user_id,
-    'message' => "Your order #{$order->id} status: {$order->status}",
-    'type' => 'success'
+// In Laravel
+Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/push/send', [
+    'userId' => '123',
+    'title' => 'New Order Received',
+    'message' => 'Table 5 has placed an order.',
+    'icon' => '/images/logo.png',
+    'url' => 'https://app.restaurant.com/orders/5'
 ]);
 ```
 
-### 2. New Message Notification
+### Step 3: Broadcasting Web Push
+Send to **all subscribed users**.
 ```php
-Http::post('http://localhost:3001/api/notifications/send', [
-    'userId' => $recipient->id,
-    'message' => "New message from {$sender->name}",
-    'type' => 'info'
+Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/push/broadcast', [
+    'title' => 'Emergency Alert',
+    'message' => 'System going down in 5 mins.',
+    'icon' => '/images/alert.png'
 ]);
 ```
 
-### 3. System Announcements
+---
+
+## 8. Role-Based Notifications
+**Use Case:** Sending alerts to a specific group of employees (e.g., "All Chefs" or "All Managers").
+
+### Step 1: Frontend - Join Role Room
+Call this when the user logs in or when their role is loaded.
+
+```javascript
+/* src/services/socketRegistration.js or Component */
+if (user.role && user.company_id) {
+  socket.emit('join-role-room', {
+    companyId: user.company_id,
+    role: user.role // e.g. 'chef', 'manager', 'waiter'
+  });
+}
+```
+
+### Step 2: Backend (Laravel) - Send to Role
 ```php
-// Broadcast to all users
-Http::post('http://localhost:3001/api/notifications/broadcast', [
-    'message' => 'System will be down for maintenance at 2 AM',
+Http::post(env('SOCKET_URL', 'http://localhost:3001') . '/api/notifications/role', [
+    'companyId' => 1,
+    'role' => 'chef',
+    'message' => 'New Order #502 requires attention!',
     'type' => 'warning'
 ]);
 ```
-
-### 4. Payment Confirmation
-```php
-Http::post('http://localhost:3001/api/notifications/send', [
-    'userId' => $payment->user_id,
-    'message' => "Payment of ${$payment->amount} received successfully",
-    'type' => 'success'
-]);
-```
-
-### 5. Stock Alert
-```php
-// When product stock is low
-Http::post('http://localhost:3001/api/notifications/send', [
-    'userId' => $admin->id,
-    'message' => "Low stock alert: {$product->name} (Only {$product->stock} left)",
-    'type' => 'warning'
-]);
-```
-
----
-
-## Troubleshooting
-
-### Socket Not Connecting?
-
-1. **Check if server is running:**
-   ```bash
-   curl http://localhost:3001/health
-   ```
-
-2. **Check for port conflicts:**
-   ```bash
-   # Windows
-   netstat -ano | findstr :3001
-   
-   # Linux/Mac
-   lsof -i :3001
-   ```
-
-3. **Check frontend connection URLs:**
-   The hook tries these URLs in order:
-   - `process.env.NEXT_PUBLIC_SOCKET_URL`
-   - `http://localhost:3001`
-   - `http://127.0.0.1:3001`
-   - `http://192.168.1.33:3001`
-
-4. **Check browser console:**
-   Look for Socket.IO connection logs
-
-### Notifications Not Appearing?
-
-1. **Verify user is connected:**
-   ```bash
-   curl http://localhost:3001/api/stats
-   ```
-   Check if your userId is in `connectedUsers` array
-
-2. **Check userId format:**
-   Make sure you're sending the correct userId format (string or number)
-
-3. **Check browser console:**
-   Socket events are logged in development mode
-
-### Server Crashes?
-
-1. **Check logs for errors**
-2. **Verify port 3001 is available**
-3. **Check Node.js version** (should be 16+)
-4. **Reinstall dependencies:**
-   ```bash
-   cd socket
-   rm -rf node_modules
-   npm install
-   ```
-
----
-
-## Environment Configuration
-
-Create `.env.local` in the `socket` folder:
-
-```env
-# Server Configuration
-PORT=3001
-NODE_ENV=development
-
-# Allowed Origins (comma-separated)
-FRONTEND_URL=http://localhost:3000
-ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-
-# Production URLs (for production environment)
-PRODUCTION_URL=https://yourdomain.com
-STAGING_URL=https://staging.yourdomain.com
-```
-
----
-
-## Production Deployment
-
-### 1. Environment Setup
-```env
-PORT=3001
-NODE_ENV=production
-FRONTEND_URL=https://yourdomain.com
-ALLOWED_ORIGINS=https://yourdomain.com,https://www.yourdomain.com
-```
-
-### 2. Using PM2 (Recommended)
-```bash
-# Install PM2
-npm install -g pm2
-
-# Start server
-cd socket
-pm2 start server.js --name "socket-server"
-
-# View logs
-pm2 logs socket-server
-
-# Restart
-pm2 restart socket-server
-
-# Stop
-pm2 stop socket-server
-```
-
-### 3. Using Docker
-```bash
-cd socket
-docker build -t socket-server .
-docker run -d -p 3001:3001 --name socket-server socket-server
-```
-
-### 4. Using systemd (Linux)
-Create `/etc/systemd/system/socket-server.service`:
-```ini
-[Unit]
-Description=Socket.IO Notification Server
-After=network.target
-
-[Service]
-Type=simple
-User=www-data
-WorkingDirectory=/path/to/socket
-ExecStart=/usr/bin/node server.js
-Restart=always
-Environment=NODE_ENV=production
-Environment=PORT=3001
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then:
-```bash
-sudo systemctl enable socket-server
-sudo systemctl start socket-server
-sudo systemctl status socket-server
-```
-
----
-
-## API Reference Summary
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/api/stats` | GET | Connection statistics |
-| `/api/notifications/send` | POST | Send to specific user |
-| `/api/notifications/broadcast` | POST | Broadcast to all |
-| `/api/content/refresh` | POST | Trigger content refresh |
-| `/api/data/invalidate` | POST | Invalidate cache |
-| `/api/content/update` | POST | Live content update |
-
----
-
-## Support
-
-- Check server logs for detailed error messages
-- Use health check endpoint to verify server status
-- Use stats endpoint to see active connections
-- Enable debug logging in development mode
-
----
-
-**Server Status Dashboard:** http://localhost:3001/
-
-This shows all available endpoints and current server status!
-
