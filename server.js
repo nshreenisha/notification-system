@@ -144,17 +144,32 @@ httpServer.on('request', async (req, res) => {
         }
 
         // Send via Socket.IO
-        io.to(`user-${notificationUserId}`).emit('notification', notification)
+        const userRoom = `user-${notificationUserId}`
+        const roomSockets = io.sockets.adapter.rooms.get(userRoom)
 
-        console.log(`📨 API notification sent to user ${notificationUserId}:`, message)
+        if (roomSockets && roomSockets.size > 0) {
+          io.to(userRoom).emit('notification', notification)
+          console.log(`📨 API notification sent to user ${notificationUserId}:`, message)
+        } else {
+          // Store offline
+          console.log(`❌ User ${notificationUserId} not connected - Storing offline notification`)
+          try {
+            const mysqlDB = await import('./lib/mysql-database.js')
+            // Add offline flag
+            notification.offline = true
+            await mysqlDB.storeOfflineMessage(notificationUserId, notification, 'notification')
+          } catch (err) {
+            console.error('Failed to store offline notification:', err)
+          }
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
-          message: 'Notification sent',
+          message: 'Notification sent (or queued)',
           targetUser: notificationUserId,
           notification,
-          connectedClients: io.engine.clientsCount
+          connectedClients: roomSockets ? roomSockets.size : 0
         }))
         break
 
@@ -437,8 +452,23 @@ httpServer.on('request', async (req, res) => {
           io.emit('content-update', contentUpdateMessage)
           console.log(`📝 Broadcast content update - ID: ${contentId}`)
         } else if (updateUserId) {
-          io.to(`user-${updateUserId}`).emit('content-update', contentUpdateMessage)
-          console.log(`📝 Content update sent to user ${updateUserId} - ID: ${contentId}`)
+          const userRoom = `user-${updateUserId}`
+          const roomSockets = io.sockets.adapter.rooms.get(userRoom)
+
+          if (roomSockets && roomSockets.size > 0) {
+            io.to(userRoom).emit('content-update', contentUpdateMessage)
+            console.log(`📝 Content update sent to user ${updateUserId} - ID: ${contentId}`)
+          } else {
+            // Store offline
+            console.log(`❌ User ${updateUserId} not connected - Storing offline content update`)
+            try {
+              const mysqlDB = await import('./lib/mysql-database.js')
+              contentUpdateMessage.offline = true
+              await mysqlDB.storeOfflineMessage(updateUserId, contentUpdateMessage, 'content-update')
+            } catch (err) {
+              console.error('Failed to store offline content update:', err)
+            }
+          }
         } else {
           res.writeHead(400, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({
@@ -450,7 +480,7 @@ httpServer.on('request', async (req, res) => {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           success: true,
-          message: 'Content update sent',
+          message: 'Content update sent (or queued)',
           contentUpdateMessage,
           connectedClients: io.engine.clientsCount
         }))
